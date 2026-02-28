@@ -2,28 +2,53 @@
 ##
 ## Script for creating APT repository from built .deb packages.
 ##
-## This creates a standard Debian repository structure without requiring
-## dpkg-scanpackages or other Debian tools, making it portable across
-## different build environments (macOS, Linux, Docker).
-##
-## Usage:
+## Usage (legacy):
 ##   ./scripts/create-botdrop-repo.sh [debs-dir] [repo-dir] [arch]
 ##
-## Arguments:
-##   debs-dir   Directory containing .deb files (default: ./debs-output)
-##   repo-dir   Output directory for repository (default: ./botdrop-repo)
-##   arch       Architecture (default: aarch64)
+## Usage (extended):
+##   ./scripts/create-botdrop-repo.sh [debs-dir] [repo-dir] [arch] [options]
+##
+## Options:
+##   --no-archive                 Do not create botdrop-repo-ARCH.zip
+##   --merge-existing <dir>       Merge packages from an existing repository dir
+##                                (expects pool/main and dists/ layout) before
+##                                adding newly built packages.
 ##
 ## Output:
 ##   - repo-dir/              APT repository structure
-##   - botdrop-repo-ARCH.zip  Compressed repository archive
+##   - botdrop-repo-ARCH.zip  Compressed repository archive (unless --no-archive)
 ##
 
-set -e
+set -euo pipefail
 
 DEBS_DIR="${1:-./debs-output}"
 REPO_DIR="${2:-./botdrop-repo}"
 ARCH="${3:-aarch64}"
+shift $(( $# >= 3 ? 3 : $# )) || true
+
+CREATE_ARCHIVE=true
+MERGE_EXISTING=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --no-archive)
+            CREATE_ARCHIVE=false
+            shift
+            ;;
+        --merge-existing)
+            MERGE_EXISTING="${2:-}"
+            if [[ -z "$MERGE_EXISTING" ]]; then
+                echo "❌ Error: --merge-existing requires a directory argument"
+                exit 1
+            fi
+            shift 2
+            ;;
+        *)
+            echo "❌ Error: Unknown option: $1"
+            exit 1
+            ;;
+    esac
+done
 
 # Detect stat command (BSD vs GNU)
 if stat -f%z /dev/null >/dev/null 2>&1; then
@@ -34,6 +59,22 @@ else
     STAT_SIZE_CMD="stat -c%s"
 fi
 
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    else
+        shasum -a 256 "$1" | awk '{print $1}'
+    fi
+}
+
+md5_of() {
+    if command -v md5sum >/dev/null 2>&1; then
+        md5sum "$1" | awk '{print $1}'
+    else
+        md5 -q "$1"
+    fi
+}
+
 ##
 ## Parse .deb control file and generate Packages entry
 ##
@@ -41,17 +82,50 @@ fi
 ##   $1: Path to .deb file
 ##   $2: Filename (for Filename: field)
 ##
+extract_control_from_deb() {
+    local deb_file="$1"
+    local tmpdir
+
+    # Use bsdtar to extract .deb (works on macOS where ar has trailing-slash bugs)
+    tmpdir=$(mktemp -d)
+    if ! bsdtar -xf "$deb_file" -C "$tmpdir" 2>/dev/null; then
+        rm -rf "$tmpdir"
+        return 1
+    fi
+
+    local control_tar
+    control_tar=$(ls "$tmpdir"/control.tar.* 2>/dev/null | head -1)
+    if [[ -z "$control_tar" ]]; then
+        rm -rf "$tmpdir"
+        return 1
+    fi
+
+    local result
+    case "$control_tar" in
+        *.xz)  result=$(xz -d < "$control_tar" | tar -xO control 2>/dev/null || xz -d < "$control_tar" | tar -xO ./control 2>/dev/null) ;;
+        *.gz)  result=$(gzip -d < "$control_tar" | tar -xO control 2>/dev/null || gzip -d < "$control_tar" | tar -xO ./control 2>/dev/null) ;;
+        *.zst) result=$(zstd -d -q < "$control_tar" | tar -xO control 2>/dev/null || zstd -d -q < "$control_tar" | tar -xO ./control 2>/dev/null) ;;
+        *.bz2) result=$(bzip2 -d < "$control_tar" | tar -xO control 2>/dev/null || bzip2 -d < "$control_tar" | tar -xO ./control 2>/dev/null) ;;
+        *)     rm -rf "$tmpdir"; return 1 ;;
+    esac
+
+    rm -rf "$tmpdir"
+    echo "$result"
+}
+
 parse_deb_control() {
     local deb_file="$1"
     local filename="$2"
     local file_size
+    local sha256
 
     file_size=$($STAT_SIZE_CMD "$deb_file")
+    sha256=$(sha256_of "$deb_file")
 
     # Extract control file from .deb
-    # .deb format: ar archive containing control.tar.xz and data.tar.xz
-    ar -p "$deb_file" control.tar.xz 2>/dev/null | xz -d | tar -xO ./control 2>/dev/null | \
-    awk -v filename="$filename" -v size="$file_size" '
+    # .deb format: ar archive containing control.tar.* and data.tar.*
+    extract_control_from_deb "$deb_file" | \
+    awk -v filename="$filename" -v size="$file_size" -v sha256="$sha256" '
         BEGIN {
             print "Filename: pool/main/" filename
             in_description = 0
@@ -99,9 +173,46 @@ parse_deb_control() {
                 print desc
             }
             print "Size: " size
+            print "SHA256: " sha256
             print ""
         }
     '
+}
+
+generate_release() {
+    local release_path="$1"
+    local packages_rel="main/binary-${ARCH}/Packages"
+    local packages_gz_rel="main/binary-${ARCH}/Packages.gz"
+    local packages_file="$(dirname "$release_path")/${packages_rel}"
+    local packages_gz_file="$(dirname "$release_path")/${packages_gz_rel}"
+
+    local packages_md5 packages_sha256 packages_size
+    local packages_gz_md5 packages_gz_sha256 packages_gz_size
+
+    packages_md5=$(md5_of "$packages_file")
+    packages_sha256=$(sha256_of "$packages_file")
+    packages_size=$($STAT_SIZE_CMD "$packages_file")
+
+    packages_gz_md5=$(md5_of "$packages_gz_file")
+    packages_gz_sha256=$(sha256_of "$packages_gz_file")
+    packages_gz_size=$($STAT_SIZE_CMD "$packages_gz_file")
+
+    cat > "$release_path" << EOF
+Origin: BotDrop
+Label: BotDrop Packages
+Suite: stable
+Codename: stable
+Date: $(date -u +"%a, %d %b %Y %H:%M:%S UTC")
+Architectures: ${ARCH}
+Components: main
+Description: BotDrop custom packages for sharp support
+MD5Sum:
+ ${packages_md5} ${packages_size} ${packages_rel}
+ ${packages_gz_md5} ${packages_gz_size} ${packages_gz_rel}
+SHA256:
+ ${packages_sha256} ${packages_size} ${packages_rel}
+ ${packages_gz_sha256} ${packages_gz_size} ${packages_gz_rel}
+EOF
 }
 
 echo "========================================"
@@ -111,6 +222,12 @@ echo ""
 echo "Input directory:  $DEBS_DIR"
 echo "Output directory: $REPO_DIR"
 echo "Architecture:     $ARCH"
+if [[ -n "$MERGE_EXISTING" ]]; then
+    echo "Merge existing:   $MERGE_EXISTING"
+fi
+if [[ "$CREATE_ARCHIVE" == false ]]; then
+    echo "Archive:          disabled (--no-archive)"
+fi
 echo ""
 
 # Check input directory
@@ -119,13 +236,13 @@ if [ ! -d "$DEBS_DIR" ]; then
     exit 1
 fi
 
-deb_count=$(ls -1 "$DEBS_DIR"/*.deb 2>/dev/null | wc -l | tr -d ' ')
+deb_count=$(find "$DEBS_DIR" -maxdepth 1 -name '*.deb' -type f | wc -l | tr -d ' ')
 if [ "$deb_count" -eq 0 ]; then
     echo "❌ Error: No .deb files found in $DEBS_DIR"
     exit 1
 fi
 
-echo "Found $deb_count .deb files"
+echo "Found $deb_count new .deb files"
 echo ""
 
 # Clean and create repository structure
@@ -134,9 +251,19 @@ rm -rf "$REPO_DIR"
 mkdir -p "$REPO_DIR/pool/main"
 mkdir -p "$REPO_DIR/dists/stable/main/binary-${ARCH}"
 
-# Copy .deb files to pool
-echo "Copying .deb files to pool..."
-cp "$DEBS_DIR"/*.deb "$REPO_DIR/pool/main/" 2>/dev/null || {
+# Merge existing repo first (incremental update)
+if [[ -n "$MERGE_EXISTING" ]]; then
+    if [[ -d "$MERGE_EXISTING/pool/main" ]]; then
+        echo "Merging existing packages from $MERGE_EXISTING/pool/main ..."
+        cp -f "$MERGE_EXISTING"/pool/main/*.deb "$REPO_DIR/pool/main/" 2>/dev/null || true
+    else
+        echo "⚠️  Warning: merge source missing pool/main: $MERGE_EXISTING"
+    fi
+fi
+
+# Copy newly built .deb files to pool (overwrite existing versions)
+echo "Copying new .deb files to pool..."
+cp -f "$DEBS_DIR"/*.deb "$REPO_DIR/pool/main/" 2>/dev/null || {
     echo "❌ Error: Failed to copy .deb files"
     exit 1
 }
@@ -163,15 +290,14 @@ for deb in "$REPO_DIR/pool/main"/*.deb; do
 done
 
 echo ""
-echo "Processed $pkg_count packages"
+echo "Processed $pkg_count total packages"
 
 # Compress Packages file
 echo "Compressing Packages index..."
-gzip -k "$packages_file"
+gzip -kf "$packages_file"
 
-# Generate Release files
+# Generate component Release (kept for compatibility)
 echo "Generating Release files..."
-
 cat > "$REPO_DIR/dists/stable/main/binary-${ARCH}/Release" << EOF
 Archive: stable
 Component: main
@@ -180,24 +306,16 @@ Label: BotDrop Packages
 Architecture: ${ARCH}
 EOF
 
-cat > "$REPO_DIR/dists/stable/Release" << EOF
-Origin: BotDrop
-Label: BotDrop Packages
-Suite: stable
-Codename: stable
-Date: $(date -u +"%a, %d %b %Y %H:%M:%S UTC")
-Architectures: ${ARCH}
-Components: main
-Description: BotDrop custom packages for sharp support
-EOF
+# Generate distribution Release with required checksums
+generate_release "$REPO_DIR/dists/stable/Release"
 
-# Create archive
-echo "Creating repository archive..."
 archive_name="botdrop-repo-${ARCH}.zip"
+archive_path="$(dirname "$REPO_DIR")/${archive_name}"
 
-cd "$(dirname "$REPO_DIR")"
-zip -r -q "$archive_name" "$(basename "$REPO_DIR")"
-cd - > /dev/null
+if [[ "$CREATE_ARCHIVE" == true ]]; then
+    echo "Creating repository archive..."
+    (cd "$(dirname "$REPO_DIR")" && zip -r -q "$archive_name" "$(basename "$REPO_DIR")")
+fi
 
 echo ""
 echo "========================================"
@@ -206,19 +324,23 @@ echo "========================================"
 echo ""
 echo "📦 Packages:          $pkg_count"
 echo "📂 Repository:        $REPO_DIR"
-echo "🗜️  Archive:           $archive_name"
-echo "💾 Archive size:      $(du -h "$archive_name" | cut -f1)"
+if [[ "$CREATE_ARCHIVE" == true ]]; then
+    echo "🗜️  Archive:           $archive_path"
+    echo "💾 Archive size:      $(du -h "$archive_path" | cut -f1)"
+fi
 echo ""
 echo "Repository structure:"
 echo "  $REPO_DIR/"
-echo "  ├── pool/main/              ($deb_count .deb files)"
+echo "  ├── pool/main/              ($pkg_count .deb files)"
 echo "  └── dists/stable/main/"
 echo "      └── binary-${ARCH}/"
 echo "          ├── Packages        ($(wc -l < "$packages_file") lines)"
 echo "          ├── Packages.gz"
 echo "          └── Release"
 echo ""
-echo "Next step: Upload to GitHub Release with:"
-echo "  gh release create packages-YYYY.MM.DD-r1 $archive_name"
-echo ""
+if [[ "$CREATE_ARCHIVE" == true ]]; then
+    echo "Next step: Upload to GitHub Release with:"
+    echo "  gh release create packages-YYYY.MM.DD-r1 $archive_path"
+    echo ""
+fi
 echo "========================================"

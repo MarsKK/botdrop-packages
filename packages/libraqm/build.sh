@@ -6,7 +6,7 @@ TERMUX_PKG_VERSION="0.10.3"
 TERMUX_PKG_SRCURL=https://github.com/HOST-Oman/libraqm/releases/download/v$TERMUX_PKG_VERSION/raqm-$TERMUX_PKG_VERSION.tar.xz
 TERMUX_PKG_SHA256=34c4d0340a18d62a6962ea36c76b06c2bc00bd2017b2d8952a85bb673cfcfcfa
 TERMUX_PKG_AUTO_UPDATE=true
-TERMUX_PKG_DEPENDS="freetype, harfbuzz, fribidi"
+TERMUX_PKG_DEPENDS="freetype, harfbuzz, fribidi, zstd"
 
 termux_step_post_get_source() {
 	# Do not forget to bump revision of reverse dependencies and rebuild them

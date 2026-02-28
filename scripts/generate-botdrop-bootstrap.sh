@@ -8,7 +8,7 @@
 ##    ./scripts/generate-botdrop-bootstrap.sh [--architectures aarch64]
 ##
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 
@@ -24,6 +24,8 @@ BOTDROP_PACKAGES=(
     "expect"          # expect for automated password setup
     "android-tools"   # adb/fastboot for wireless ADB fallback
 )
+
+BOTDROP_APT_LINE='deb [trusted=yes] https://zhixianio.github.io/botdrop-packages/ stable main'
 
 # Convert array to comma-separated list
 BOTDROP_PACKAGES_CSV=$(IFS=,; echo "${BOTDROP_PACKAGES[*]}")
@@ -41,6 +43,25 @@ echo "Using pre-built packages from Termux apt repo"
 echo "========================================"
 
 # Run generate-bootstraps.sh with BotDrop packages.
-exec "${SCRIPT_DIR}/generate-bootstraps.sh" \
+"${SCRIPT_DIR}/generate-bootstraps.sh" \
     --add "${BOTDROP_PACKAGES_CSV}" \
     "$@"
+
+# Inject BotDrop APT source into generated bootstrap archives.
+tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/botdrop-bootstrap.XXXXXXXX")"
+trap 'rm -rf "$tmpdir"' EXIT
+
+mkdir -p "$tmpdir/etc/apt/sources.list.d"
+printf '%s\n' "$BOTDROP_APT_LINE" > "$tmpdir/etc/apt/sources.list.d/botdrop.list"
+
+shopt -s nullglob
+for zip_path in bootstrap-*.zip; do
+    echo "[*] Injecting botdrop source into $zip_path"
+    (
+        cd "$tmpdir"
+        zip -q "$OLDPWD/$zip_path" "etc/apt/sources.list.d/botdrop.list"
+    )
+done
+shopt -u nullglob
+
+echo "✅ Injected botdrop.list into bootstrap archives"

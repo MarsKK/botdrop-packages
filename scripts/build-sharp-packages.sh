@@ -2,9 +2,9 @@
 ##
 ## Script for building all sharp dependencies for BotDrop.
 ##
-## This builds 33 packages required for Node.js sharp library:
+## This builds 65 packages required for Node.js sharp library:
 ## - libvips (core image processing library)
-## - 26 libvips dependencies (image format libraries, graphics libs)
+## - 58 libvips dependencies (image format libraries, graphics libs)
 ## - 6 build tools (needed when npm builds sharp from source)
 ##
 ## Usage:
@@ -23,51 +23,90 @@ REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 # Package list in dependency order
 # Build tools must come first as they're needed to compile other packages
 SHARP_PACKAGES=(
-    # Build tools (required when npm builds sharp from source)
+    # ── Build tools (required when npm builds sharp from source) ──
     "pkg-config"
     "ndk-sysroot"
-    "python"
     "make"
     "binutils-is-llvm"
     "which"
 
-    # Core dependencies (no dependencies themselves)
-    "zlib"
-    "libexpat"
-
-    # Level 1 dependencies
+    # ── Tier 0: Zero-dependency foundation packages ──
     "cgif"
     "fftw"
-    "fontconfig"
-    "glib"
-    "imath"
+    "zlib"
+    "libpng"                  # depends: zlib
+    "libexpat"
+    "giflib"                  # NEW
+    "libandroid-execinfo"     # NEW
+    "libandroid-shmem"        # NEW
+    "liblzo"                  # NEW
+    "libpixman"               # NEW
+    "libaom"                  # NEW
+    "libdav1d"                # NEW
+    "libnspr"                 # NEW
+    "librav1e"                # NEW (Rust/Cargo build)
+    "imath"                   # depends: libc++
+
+    # ── Tier 1: Depend on bootstrap or Tier 0 only ──
+    "fontconfig"              # depends: freetype, libexpat
+    "xorgproto"
+    "libxrender"              # depends: libx11
+    "python"
+    "glib"                    # depends: zlib, python, etc.
     "libjpeg-turbo"
-    "libpng"
     "libexif"
     "libimagequant"
     "littlecms"
+    "jbig2dec"                # NEW - depends: libpng
+    "libidn"                  # NEW - depends: libiconv
+    "libgraphite"             # NEW - depends: libc++
+    "libde265"                # NEW - depends: libc++
+    "libx265"                 # NEW - depends: libc++
+    "libjasper"               # NEW - depends: libjpeg-turbo
 
-    # Level 2 dependencies
-    "libwebp"
-    "libtiff"
-    "libheif"
-    "libjxl"
-    "openexr"
+    # ── Tier 2: Depend on Tier 1 packages ──
+    "libtiff"                 # depends: libjpeg-turbo, zlib
+    "libtool"                 # NEW - produces libltdl subpackage
+    "libzip"                  # NEW - depends: zlib, openssl
+    "fribidi"                 # NEW - depends: glib
+    "liblqr"                  # NEW - depends: glib
+    "libgts"                  # NEW - depends: glib
+    "djvulibre"               # NEW - depends: libjpeg-turbo, libtiff
+    "gdk-pixbuf"              # NEW - depends: glib, libpng, libtiff, libjpeg-turbo
     "openjpeg"
+    "libwebp"                 # depends: giflib, libjpeg-turbo, libpng, libtiff
 
-    # X11 dependencies
-    "xorgproto"
-    "libxrender"
+    # ── Tier 3: Mid-level graphics libraries ──
+    "libcairo"                # depends: fontconfig, glib, libandroid-shmem, libandroid-execinfo, liblzo, libpixman
+    "harfbuzz"                # NEW - depends: glib, libcairo, libgraphite
+    "openjph"                 # NEW - depends: libtiff (JPEG2000 HTJ2K, needed by openexr 3.4+)
+    "openexr"                 # depends: imath, zlib, openjph
+    "libjxl"                  # depends: giflib, glib, libjpeg-turbo
+    "libheif"                 # depends: gdk-pixbuf, libaom, libdav1d, libde265, librav1e, libx265
+    "libnss"                  # NEW - depends: libnspr
 
-    # Higher level libraries
-    "libcairo"
-    "pango"
-    "librsvg"
-    "poppler"
-    "imagemagick"
-    "libarchive"
+    # ── Tier 4: Text rendering and processing ──
+    "ghostscript"             # NEW - depends: fontconfig, jbig2dec, libidn, libjpeg-turbo, littlecms, openjpeg
+    "pango"                   # depends: fontconfig, fribidi, glib, harfbuzz, libcairo
+    "libraqm"                 # NEW - depends: harfbuzz, fribidi
+    "libraw"                  # NEW - depends: libjasper, libjpeg-turbo, littlecms
 
-    # The main package
+    # ── Tier 5: High-level rendering libraries ──
+    "librsvg"                 # depends: gdk-pixbuf, glib, harfbuzz, libcairo, pango
+    "libgd"                   # NEW - depends: fontconfig, libheif, libjpeg-turbo, libpng, libtiff, libwebp
+    "graphviz"                # NEW - depends: gdk-pixbuf, harfbuzz, libcairo, libgd, libgts, libtool, librsvg, pango
+
+    # ── Tier 6: GPG stack (needed by poppler) ──
+    "gpgme"                   # NEW - depends: gnupg, libassuan, libgpg-error
+    "gpgmepp"                 # NEW - depends: gpgme
+
+    # ── Tier 7: Top-level processing suites ──
+    "imagemagick"             # depends: djvulibre, fftw, ghostscript, graphviz, harfbuzz, imagemagick deps...
+    "poppler"                 # depends: gpgme, gpgmepp, libcairo, libnspr, libnss
+    "leptonica"               # NEW - depends: giflib, libjpeg-turbo, libpng, libtiff, libwebp, openjpeg
+    "libarchive"              # depends: zlib
+
+    # ── The main package ──
     "libvips"
 )
 
@@ -113,6 +152,19 @@ for pkg in "${SHARP_PACKAGES[@]}"; do
                     echo "     Copied: $(basename "$deb_file")"
                     deb_count=$((deb_count + 1))
                 done < <(find "$deb_dir" -name "${pkg}_*.deb" -print0 2>/dev/null)
+
+                # Collect subpackage .debs (e.g., libtool produces libltdl)
+                if [ -d "$(dirname "$SCRIPT_DIR")/packages/${pkg}" ]; then
+                    for subpkg in "$(dirname "$SCRIPT_DIR")"/packages/${pkg}/*.subpackage.sh; do
+                        [ -f "$subpkg" ] || continue
+                        subpkg_name=$(basename "$subpkg" .subpackage.sh)
+                        while IFS= read -r -d '' deb_file; do
+                            cp "$deb_file" "$OUTPUT_DIR/"
+                            echo "     Copied subpackage: $(basename "$deb_file")"
+                            deb_count=$((deb_count + 1))
+                        done < <(find "$deb_dir" -name "${subpkg_name}_*.deb" -print0 2>/dev/null)
+                    done
+                fi
             fi
         done
 

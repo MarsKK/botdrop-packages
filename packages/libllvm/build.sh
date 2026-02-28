@@ -44,9 +44,10 @@ TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
 -DCROSS_TOOLCHAIN_FLAGS_LLVM_NATIVE=-DLLVM_NATIVE_TOOL_DIR=$TERMUX_PKG_HOSTBUILD_DIR/bin
 -DLIBOMP_ENABLE_SHARED=FALSE
 -DOPENMP_ENABLE_LIBOMPTARGET=OFF
--DLLVM_ENABLE_SPHINX=ON
--DSPHINX_OUTPUT_MAN=ON
+-DLLVM_ENABLE_SPHINX=OFF
+-DSPHINX_OUTPUT_MAN=OFF
 -DSPHINX_WARNINGS_AS_ERRORS=OFF
+-DLLDB_ENABLE_PYTHON=OFF
 -DLLVM_TARGETS_TO_BUILD=all
 -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD=ARC;CSKY;M68k;VE
 -DPERL_EXECUTABLE=$(command -v perl)
@@ -128,13 +129,25 @@ termux_step_post_configure() {
 # shellcheck disable=SC2031
 termux_step_post_make_install() {
 	if [[ "$TERMUX_CMAKE_BUILD" == "Ninja" ]]; then
-		ninja -j "$TERMUX_PKG_MAKE_PROCESSES" docs-{llvm,clang}-man
+		if ninja -t targets | grep -qE '^docs-(llvm|clang)-man'; then
+			ninja -j "$TERMUX_PKG_MAKE_PROCESSES" docs-{llvm,clang}-man
+		else
+			echo "Skipping docs targets: disabled by config"
+		fi
 	else
-		make -j "$TERMUX_PKG_MAKE_PROCESSES" docs-{llvm,clang}-man
+		if make -n docs-llvm-man >/dev/null 2>&1; then
+			make -j "$TERMUX_PKG_MAKE_PROCESSES" docs-{llvm,clang}-man
+		else
+			echo "Skipping docs targets: disabled by config"
+		fi
 	fi
 
-	cp docs/man/* "$TERMUX_PREFIX/share/man/man1"
-	cp tools/clang/docs/man/{clang,diagtool}.1 "$TERMUX_PREFIX/share/man/man1"
+	if compgen -G "docs/man/*" >/dev/null; then
+		cp docs/man/* "$TERMUX_PREFIX/share/man/man1"
+	fi
+	if [[ -f tools/clang/docs/man/clang.1 || -f tools/clang/docs/man/diagtool.1 ]]; then
+		cp tools/clang/docs/man/{clang,diagtool}.1 "$TERMUX_PREFIX/share/man/man1"
+	fi
 	cd "$TERMUX_PREFIX/bin" || termux_error_exit "failed to change into 'bin' directory"
 
 

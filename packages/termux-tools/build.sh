@@ -33,7 +33,21 @@ termux_step_configure() {
 }
 
 termux_step_pre_configure() {
+	# Ensure doc generation won't fail when pandoc is unavailable in build env
+	if [ -f "$TERMUX_PKG_SRCDIR/doc/Makefile.am" ]; then
+		sed -i 's#\t@pandoc --standalone --to man --output termux.1 termux.1.md#\t@touch termux.1#' "$TERMUX_PKG_SRCDIR/doc/Makefile.am"
+	elif [ -f "$TERMUX_PKG_SRCDIR/src/doc/Makefile.am" ]; then
+		sed -i 's#\t@pandoc --standalone --to man --output termux.1 termux.1.md#\t@touch termux.1#' "$TERMUX_PKG_SRCDIR/src/doc/Makefile.am"
+	fi
+	PATH="/usr/bin:$PATH"
+	export PATH
 	autoreconf -vfi
+}
+
+termux_step_make() {
+	PATH="/usr/bin:$PATH"
+	export PATH
+	make -j "$TERMUX_PKG_MAKE_PROCESSES"
 }
 
 termux_step_post_make_install() {

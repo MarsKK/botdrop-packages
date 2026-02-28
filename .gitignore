@@ -25,6 +25,9 @@ scripts/*.log
 # GitHub Actions build artifacts
 debs*
 checksum*
+/botdrop-repo/
+/botdrop-repo-test/
+/tmp/
 
 # Built *.deb files.
 /debs/

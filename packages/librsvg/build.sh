@@ -6,19 +6,19 @@ TERMUX_PKG_VERSION="2.61.3"
 TERMUX_PKG_SRCURL=https://download.gnome.org/sources/librsvg/${TERMUX_PKG_VERSION%.*}/librsvg-${TERMUX_PKG_VERSION}.tar.xz
 TERMUX_PKG_SHA256=a56d2c80d744ad2f2718f85df466fe71d24ff1f9bc3e5ef588bde4d7e87815f2
 TERMUX_PKG_AUTO_UPDATE=true
-TERMUX_PKG_DEPENDS="fontconfig, freetype, gdk-pixbuf, glib, harfbuzz, libcairo, libdav1d, libpng, libxml2, pango"
+TERMUX_PKG_DEPENDS="fontconfig, freetype, gdk-pixbuf, glib, harfbuzz, libcairo, libdav1d, libpng, libxml2, pango, zstd"
 # Note: Do not add valac which prevents bootstrapping due to cyclic dependency (#27567)
 TERMUX_PKG_BUILD_DEPENDS="g-ir-scanner"
 TERMUX_PKG_BREAKS="librsvg-dev"
 TERMUX_PKG_REPLACES="librsvg-dev"
 TERMUX_PKG_VERSIONED_GIR=false
-TERMUX_PKG_DISABLE_GIR=false
+TERMUX_PKG_DISABLE_GIR=true
 TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
 -Davif=enabled
 -Ddocs=disabled
--Dintrospection=enabled
+-Dintrospection=disabled
 -Dtests=false
--Dvala=enabled
+-Dvala=disabled
 -Dpixbuf-loader=enabled
 "
 

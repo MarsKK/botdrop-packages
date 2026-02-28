@@ -9,12 +9,12 @@ TERMUX_PKG_SRCURL="https://poppler.freedesktop.org/poppler-${TERMUX_PKG_VERSION}
 TERMUX_PKG_SHA256=d8c5eb30b50285ad9f0af8c6335cc2d3b9597fca475cbc2598a5479fa379f779
 # The package must be updated at the same time as poppler, auto updater script does not support that.
 TERMUX_PKG_AUTO_UPDATE=false
-TERMUX_PKG_DEPENDS="fontconfig, freetype, glib, gpgme, gpgmepp, libc++, libcairo, libcurl, libiconv, libjpeg-turbo, libnspr, libnss, libpng, libtiff, littlecms, openjpeg, zlib"
+TERMUX_PKG_DEPENDS="fontconfig, freetype, glib, gpgme, gpgmepp, libc++, libcairo, libcurl, libiconv, libjpeg-turbo, libnspr, libnss, libpng, libtiff, littlecms, openjpeg, zlib, zstd"
 TERMUX_PKG_BUILD_DEPENDS="boost, boost-headers, g-ir-scanner, openjpeg-tools"
 TERMUX_PKG_BREAKS="poppler-dev, poppler-qt (<< ${TERMUX_PKG_VERSION})"
 TERMUX_PKG_REPLACES="poppler-dev, poppler-qt (<< 22.04.0-3)"
 TERMUX_PKG_VERSIONED_GIR=false
-TERMUX_PKG_DISABLE_GIR=false
+TERMUX_PKG_DISABLE_GIR=true
 #texlive needs the xpdf headers
 TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
 -DENABLE_GLIB=ON
