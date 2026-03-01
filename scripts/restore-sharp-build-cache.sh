@@ -44,8 +44,10 @@ for deb in "$DEBS_DIR"/*.deb; do
         continue
     fi
 
-    # Extract package files into prefix (same method as termux_step_get_dependencies.sh)
-    if ar p "$deb" data.tar.xz 2>/dev/null | tar xJ --no-overwrite-dir -C / 2>/dev/null; then
+    # Extract package files into prefix.
+    # Use --exclude './' to avoid "Cannot change mode" error on root directory.
+    # Try data.tar.xz first, fall back to data.tar.gz / data.tar.zst.
+    if ar p "$deb" data.tar.xz 2>/dev/null | tar xJ -C / --exclude './' 2>/dev/null; then
         echo "$pkg_version" > "$BUILT_PACKAGES_DIR/$pkg_name"
         restored=$((restored + 1))
     else
