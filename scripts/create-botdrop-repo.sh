@@ -78,15 +78,24 @@ md5_of() {
 ##
 ## Parse .deb control file and generate Packages entry
 ##
+## Uses dpkg-deb when available (reliable, standard on Debian/Ubuntu),
+## falls back to bsdtar extraction for macOS/other platforms.
+##
 ## Args:
 ##   $1: Path to .deb file
 ##   $2: Filename (for Filename: field)
 ##
 extract_control_from_deb() {
     local deb_file="$1"
-    local tmpdir
 
-    # Use bsdtar to extract .deb (works on macOS where ar has trailing-slash bugs)
+    # Prefer dpkg-deb (reliable, handles all .deb formats correctly)
+    if command -v dpkg-deb >/dev/null 2>&1; then
+        dpkg-deb -f "$deb_file" 2>/dev/null
+        return $?
+    fi
+
+    # Fallback: bsdtar extraction (for macOS where dpkg-deb may not exist)
+    local tmpdir
     tmpdir=$(mktemp -d)
     if ! bsdtar -xf "$deb_file" -C "$tmpdir" 2>/dev/null; then
         rm -rf "$tmpdir"
@@ -122,12 +131,11 @@ parse_deb_control() {
     file_size=$($STAT_SIZE_CMD "$deb_file")
     sha256=$(sha256_of "$deb_file")
 
-    # Extract control file from .deb
-    # .deb format: ar archive containing control.tar.* and data.tar.*
+    # If dpkg-scanpackages is available, we use it in the caller instead.
+    # This function is the per-file fallback.
     extract_control_from_deb "$deb_file" | \
     awk -v filename="$filename" -v size="$file_size" -v sha256="$sha256" '
         BEGIN {
-            print "Filename: pool/main/" filename
             in_description = 0
         }
 
@@ -172,6 +180,7 @@ parse_deb_control() {
             if (in_description) {
                 print desc
             }
+            print "Filename: pool/main/" filename
             print "Size: " size
             print "SHA256: " sha256
             print ""
@@ -278,21 +287,30 @@ echo "Generating Packages index..."
 packages_file="$REPO_DIR/dists/stable/main/binary-${ARCH}/Packages"
 > "$packages_file"
 
-pkg_count=0
-for deb in "$REPO_DIR/pool/main"/*.deb; do
-    [ -f "$deb" ] || continue
+if command -v dpkg-scanpackages >/dev/null 2>&1; then
+    # Fast path: dpkg-scanpackages generates a correct Packages file directly
+    echo "  Using dpkg-scanpackages..."
+    (cd "$REPO_DIR" && dpkg-scanpackages pool/main /dev/null 2>/dev/null > "$packages_file")
+    pkg_count=$(grep -c "^Package:" "$packages_file" || echo 0)
+else
+    # Fallback: parse each .deb individually
+    echo "  Using per-file extraction (dpkg-scanpackages not found)..."
+    pkg_count=0
+    for deb in "$REPO_DIR/pool/main"/*.deb; do
+        [ -f "$deb" ] || continue
 
-    filename=$(basename "$deb")
-    printf "  Processing: %-50s" "$filename"
+        filename=$(basename "$deb")
+        printf "  Processing: %-50s" "$filename"
 
-    if parse_deb_control "$deb" "$filename" >> "$packages_file"; then
-        echo "✓"
-        pkg_count=$((pkg_count + 1))
-    else
-        echo "✗"
-        echo "⚠️  Warning: Failed to parse $filename"
-    fi
-done
+        if parse_deb_control "$deb" "$filename" >> "$packages_file"; then
+            echo "✓"
+            pkg_count=$((pkg_count + 1))
+        else
+            echo "✗"
+            echo "⚠️  Warning: Failed to parse $filename"
+        fi
+    done
+fi
 
 echo ""
 echo "Processed $pkg_count total packages"
