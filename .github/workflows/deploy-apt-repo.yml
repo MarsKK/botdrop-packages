@@ -73,8 +73,20 @@ jobs:
           rm -rf ./debs-output ./site-root
           mkdir -p ./debs-output ./site-root
 
+      - name: Restore build cache
+        uses: actions/cache@v4
+        with:
+          path: output/
+          key: sharp-build-${{ env.TARGET_ARCH }}-${{ hashFiles('packages/*/build.sh', 'scripts/build-sharp-packages.sh') }}
+          restore-keys: |
+            sharp-build-${{ env.TARGET_ARCH }}-
+
       - name: Build sharp packages in Docker
-        run: ./scripts/run-docker.sh ./scripts/build-sharp-packages.sh "${TARGET_ARCH}" ./debs-output
+        run: |
+          ./scripts/run-docker.sh bash -c "
+            ./scripts/restore-sharp-build-cache.sh output/ ${TARGET_ARCH} &&
+            ./scripts/build-sharp-packages.sh ${TARGET_ARCH} ./debs-output
+          "
 
       - name: Verify build output
         run: |
