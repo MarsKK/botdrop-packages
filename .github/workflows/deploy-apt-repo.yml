@@ -38,8 +38,6 @@ on:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 concurrency:
   group: deploy-apt-repo
@@ -235,21 +233,13 @@ jobs:
               botdrop-repo-aarch64.zip
           fi
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: site-root
-
-  # ─── Job 2: Deploy to GitHub Pages (requires environment approval) ───
-  deploy:
-    needs: build
-    if: github.ref == 'refs/heads/master' || github.event.inputs.update_latest == 'true'
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-
-    steps:
       - name: Deploy to GitHub Pages
-        id: deploy
-        uses: actions/deploy-pages@v4
+        if: github.ref == 'refs/heads/master' || github.event.inputs.update_latest == 'true'
+        run: |
+          cd site-root
+          git init
+          git checkout -b gh-pages
+          git add -A
+          git -c user.name="github-actions" -c user.email="github-actions@github.com" \
+            commit -m "deploy: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          git push --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" gh-pages
