@@ -45,6 +45,7 @@ echo "file: $ZIP_PATH"
 
 need_entry "bin/pkg"
 need_entry "etc/apt/sources.list"
+need_entry "etc/apt/sources.list.d/botdrop.list"
 need_entry "etc/profile"
 
 if ! has_line "bin/adb"; then

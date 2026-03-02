@@ -6,7 +6,18 @@ termux_step_override_config_scripts() {
 
 	# Make $TERMUX_PREFIX/bin/sh executable on the builder, so that build
 	# scripts can assume that it works on both builder and host later on:
-	ln -sf /bin/sh "$TERMUX_PREFIX/bin/sh"
+	local _termux_builder_sh="$TERMUX_PREFIX/bin/sh"
+	local _termux_builder_sh_dir
+	_termux_builder_sh_dir="$(dirname "$_termux_builder_sh")"
+	if [ -L "$_termux_builder_sh" ] && [ "$(readlink "$_termux_builder_sh")" = "/bin/sh" ]; then
+		:
+	elif [ -w "$_termux_builder_sh_dir" ]; then
+		ln -sf /bin/sh "$_termux_builder_sh"
+	elif [ -x "$_termux_builder_sh" ] || [ -x /bin/sh ]; then
+		echo "termux - note: $_termux_builder_sh is not writable, using existing shell"
+	else
+		termux_error_exit "No usable shell for builder at $_termux_builder_sh"
+	fi
 
 	# Does this package or its build depend on 'libllvm'?
 	if [[ "$TERMUX_PKG_DEPENDS" != "${TERMUX_PKG_DEPENDS/libllvm/}" ||

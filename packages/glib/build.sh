@@ -17,7 +17,7 @@ TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
 -Dintrospection=enabled
 -Druntime_dir=$TERMUX_PREFIX/var/run
 -Dlibmount=disabled
--Dman-pages=enabled
+-Dman-pages=disabled
 -Dtests=false
 "
 TERMUX_PKG_RM_AFTER_INSTALL="

@@ -7,11 +7,11 @@ TERMUX_PKG_REVISION=1
 TERMUX_PKG_SRCURL=https://github.com/libvips/libvips/archive/refs/tags/v${TERMUX_PKG_VERSION}.tar.gz
 TERMUX_PKG_SHA256=33bf7fad3d775389a2bfbae4b391196ffedcfa1f3fed258ec506d9c0241b0612
 TERMUX_PKG_AUTO_UPDATE=true
-TERMUX_PKG_DEPENDS="cgif, fftw, fontconfig, glib, imagemagick, imath, libc++, libcairo, libexif, libexpat, libheif, libimagequant, libjpeg-turbo, libjxl, libpng, librsvg, libtiff, libwebp, littlecms, openexr, openjpeg, pango, poppler, zlib"
+TERMUX_PKG_DEPENDS="cgif, fftw, fontconfig, glib, imagemagick, imath, libc++, libarchive, libcairo, libexif, libexpat, libheif, libimagequant, libjpeg-turbo, libjxl, libpng, librsvg, libtiff, libwebp, littlecms, openexr, openjpeg, pango, poppler, zlib, zstd"
 TERMUX_PKG_BUILD_DEPENDS="g-ir-scanner, glib-cross, valac"
 TERMUX_PKG_DISABLE_GIR=true
 TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
--Dintrospection=enabled
+-Dintrospection=disabled
 -Dvapi=true
 -Dorc=disabled
 "

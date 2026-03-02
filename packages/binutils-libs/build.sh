@@ -23,7 +23,7 @@ TERMUX_PKG_GROUPS="base-devel"
 
 # For binutils-cross:
 # Since NDK r27, debug sections of libraries from the bundled sysroot are
-# compressed with zstd. It is necessary to enable the zstd support for ld.bfd.
+# compressed with zstd. Prefer enabling zstd support when host pkg-config can find it.
 TERMUX_PKG_HOSTBUILD=true
 TERMUX_PKG_EXTRA_HOSTBUILD_CONFIGURE_ARGS="
 --prefix=$TERMUX_PREFIX/opt/binutils/cross
@@ -32,9 +32,7 @@ TERMUX_PKG_EXTRA_HOSTBUILD_CONFIGURE_ARGS="
 --disable-static
 --disable-nls
 --with-system-zlib
---with-zstd
 --disable-gprofng
-ZSTD_LIBS=-l:libzstd.a
 "
 
 termux_step_post_get_source() {
@@ -43,8 +41,16 @@ termux_step_post_get_source() {
 }
 
 termux_step_host_build() {
+	local args
+	args=$TERMUX_PKG_EXTRA_HOSTBUILD_CONFIGURE_ARGS
+
+	# Keep binutils' native auto-detection for zstd in host builds.
+	# Forcing "--with-zstd" based on a pre-check can mis-detect availability when
+	# the pre-check and configure use different pkg-config environments.
+	# "auto" avoids hard-failing and still enables zstd when discoverable.
+
 	# shellcheck disable=SC2086
-	"$TERMUX_PKG_SRCDIR/configure" $TERMUX_PKG_EXTRA_HOSTBUILD_CONFIGURE_ARGS
+	"$TERMUX_PKG_SRCDIR/configure" $args
 	make -j "$TERMUX_PKG_MAKE_PROCESSES"
 	make install
 	make install-strip

@@ -81,6 +81,8 @@ termux_step_get_dependencies() {
 			termux_run_build-package
 		fi
 	done < <(./scripts/buildorder.py $([[ "${TERMUX_INSTALL_DEPS}" == "true" ]] && echo "-i") "$TERMUX_PKG_BUILDER_DIR" $TERMUX_PACKAGES_DIRECTORIES || echo "ERROR")
+
+	return 0
 }
 
 termux_force_check_package_dependency() {

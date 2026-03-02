@@ -88,12 +88,26 @@ $SUDO docker start $CONTAINER_NAME >/dev/null 2>&1 || {
 		--tty \
 		$TERMUX_BUILDER_IMAGE_NAME
 	if [ "$UNAME" != Darwin ]; then
-		if [ $(id -u) -ne 1001 -a $(id -u) -ne 0 ]; then
+		HOST_UID=$(id -u)
+		HOST_GID=$(id -g)
+		if [ $HOST_UID -ne 1001 -a $HOST_UID -ne 0 ]; then
 			echo "Changed builder uid/gid... (this may take a while)"
-			$SUDO docker exec $DOCKER_TTY $CONTAINER_NAME sudo chown -R $(id -u) $CONTAINER_HOME_DIR
-			$SUDO docker exec $DOCKER_TTY $CONTAINER_NAME sudo chown -R $(id -u) /data
-			$SUDO docker exec $DOCKER_TTY $CONTAINER_NAME sudo usermod -u $(id -u) builder
-			$SUDO docker exec $DOCKER_TTY $CONTAINER_NAME sudo groupmod -g $(id -g) builder
+			$SUDO docker exec $DOCKER_TTY $CONTAINER_NAME sudo chown -R "$HOST_UID" "$CONTAINER_HOME_DIR"
+			$SUDO docker exec $DOCKER_TTY $CONTAINER_NAME sudo chown -R "$HOST_UID" /data
+			EXISTING_UID=$($SUDO docker exec $DOCKER_TTY $CONTAINER_NAME sh -lc "getent passwd "$HOST_UID" | cut -d: -f1")
+			BUILDER_UID=$($SUDO docker exec $DOCKER_TTY $CONTAINER_NAME id -u builder)
+			if [ "$BUILDER_UID" != "$HOST_UID" ] && [ -z "$EXISTING_UID" ]; then
+				$SUDO docker exec $DOCKER_TTY $CONTAINER_NAME sudo usermod -u "$HOST_UID" builder
+			elif [ "$BUILDER_UID" != "$HOST_UID" ] && [ -n "$EXISTING_UID" ] && [ "$EXISTING_UID" != "builder" ]; then
+				echo "Skip changing builder uid; host UID $HOST_UID already exists as user '$EXISTING_UID' in container"
+			fi
+			EXISTING_GID=$($SUDO docker exec $DOCKER_TTY $CONTAINER_NAME getent group "$HOST_GID" | cut -d: -f1)
+			BUILDER_GID=$($SUDO docker exec $DOCKER_TTY $CONTAINER_NAME id -g builder)
+			if [ "$BUILDER_GID" != "$HOST_GID" ] && [ -z "$EXISTING_GID" ]; then
+				$SUDO docker exec $DOCKER_TTY $CONTAINER_NAME sudo groupmod -g "$HOST_GID" builder
+			elif [ "$BUILDER_GID" != "$HOST_GID" ] && [ -n "$EXISTING_GID" ] && [ "$EXISTING_GID" != "builder" ]; then
+				echo "Skip changing builder gid; host GID $HOST_GID already exists as group '$EXISTING_GID' in container"
+			fi
 		fi
 	fi
 }

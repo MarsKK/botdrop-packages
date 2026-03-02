@@ -2,7 +2,10 @@ termux_step_handle_buildarch() {
 	[ "$TERMUX_ON_DEVICE_BUILD" = "true" ] && return
 
 	# If $TERMUX_PREFIX already exists, it may have been built for a different arch
-	local TERMUX_ARCH_FILE=/data/TERMUX_ARCH
+	local TERMUX_ARCH_FILE=${TERMUX_ARCH_FILE:-/data/TERMUX_ARCH}
+	if [ ! -w "$(dirname "$TERMUX_ARCH_FILE")" ]; then
+		TERMUX_ARCH_FILE=/tmp/TERMUX_ARCH
+	fi
 	if [ -f "${TERMUX_ARCH_FILE}" ]; then
 		local TERMUX_PREVIOUS_ARCH
 		TERMUX_PREVIOUS_ARCH=$(cat $TERMUX_ARCH_FILE)

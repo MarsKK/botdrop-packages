@@ -1,0 +1,255 @@
+name: Deploy BotDrop APT Repo
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag (leave empty for auto-generated)'
+        required: false
+        default: ''
+      sharp_addon_deb:
+        description: 'Optional sharp-node-addon .deb override (file path or URL)'
+        required: false
+        default: ''
+      require_sharp_addon:
+        description: 'Fail if sharp-node-addon is not available'
+        required: false
+        type: choice
+        default: 'false'
+        options:
+          - 'false'
+          - 'true'
+      update_latest:
+        description: 'Update apt-repo-latest tag/release (recommended only on master)'
+        required: false
+        type: choice
+        default: 'false'
+        options:
+          - 'false'
+          - 'true'
+  push:
+    branches:
+      - master
+      - 'ralph/botdrop-apt-repo'
+    paths:
+      - 'scripts/build-sharp-packages.sh'
+      - 'scripts/create-botdrop-repo.sh'
+      - '.github/workflows/deploy-apt-repo.yml'
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: deploy-apt-repo
+  cancel-in-progress: false
+
+jobs:
+  # ─── Job 1: Build, validate, and publish staging APT source ───
+  build:
+    runs-on: ubuntu-latest
+    env:
+      TARGET_ARCH: aarch64
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Free disk space
+        run: |
+          sudo apt-get remove -y '^dotnet-.*' '^llvm-.*' 'php.*' '^mongodb-.*' '^mysql-.*' azure-cli google-cloud-sdk hhvm google-chrome-stable firefox powershell mono-devel || true
+          sudo apt-get autoremove -y
+          sudo apt-get clean
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h
+
+      - name: Prepare workspace
+        run: |
+          rm -rf ./debs-output ./site-root
+          mkdir -p ./debs-output ./site-root
+
+      - name: Restore build cache
+        uses: actions/cache@v4
+        with:
+          path: output/
+          key: sharp-build-${{ env.TARGET_ARCH }}-${{ hashFiles('packages/*/build.sh', 'scripts/build-sharp-packages.sh') }}
+          restore-keys: |
+            sharp-build-${{ env.TARGET_ARCH }}-
+
+      - name: Seed cache from gh-pages
+        continue-on-error: true
+        run: |
+          if [ -z "$(ls output/*.deb 2>/dev/null)" ]; then
+            echo "No cached .debs found, seeding from gh-pages..."
+            git fetch origin gh-pages --depth=1 2>/dev/null || exit 0
+            mkdir -p output
+            git archive origin/gh-pages -- pool/main/ | tar x --strip-components=2 -C output/ 2>/dev/null || true
+            echo "Seeded $(ls output/*.deb 2>/dev/null | wc -l | tr -d ' ') packages from gh-pages"
+          else
+            echo "Cache already has $(ls output/*.deb | wc -l | tr -d ' ') packages"
+          fi
+
+      - name: Build sharp packages in Docker
+        run: |
+          ./scripts/run-docker.sh bash -c "
+            ./scripts/restore-sharp-build-cache.sh output/ ${TARGET_ARCH} &&
+            ./scripts/build-sharp-packages.sh ${TARGET_ARCH} ./debs-output
+          "
+
+      - name: Verify build output
+        run: |
+          ls -lh ./debs-output/*.deb
+          echo "Deb count: $(ls -1 ./debs-output/*.deb | wc -l)"
+
+      - name: Import sharp-node-addon
+        id: sharp_addon
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHARP_ADDON_INPUT: ${{ github.event.inputs.sharp_addon_deb }}
+          REQUIRE_SHARP_ADDON: ${{ github.event.inputs.require_sharp_addon }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tmp_dir="$RUNNER_TEMP/sharp-addon"
+          mkdir -p "$tmp_dir"
+          addon_file=""
+
+          # 1. User override
+          if [ -n "${SHARP_ADDON_INPUT:-}" ]; then
+            addon_file="$SHARP_ADDON_INPUT"
+            echo "sharp-node-addon: using input override"
+
+          # 2. Download from sharp-node-addon-latest release
+          elif gh release download "sharp-node-addon-latest" -R "$REPO" \
+                 -p "sharp-node-addon_*_aarch64.deb" -D "$tmp_dir" --clobber 2>/dev/null; then
+            addon_file="$(find "$tmp_dir" -maxdepth 1 -name 'sharp-node-addon_*_aarch64.deb' -print -quit)"
+            if [ -n "$addon_file" ]; then
+              echo "sharp-node-addon: downloaded from sharp-node-addon-latest release"
+            fi
+          fi
+
+          if [ -n "$addon_file" ]; then
+            ./scripts/import-sharp-addon.sh "$addon_file" ./debs-output
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "sharp-node-addon not found (optional)"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            if [ "$REQUIRE_SHARP_ADDON" = "true" ]; then
+              echo "::error::sharp-node-addon not found but require_sharp_addon=true"
+              exit 1
+            fi
+          fi
+
+      - name: Checkout gh-pages (existing repo state)
+        uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          ref: gh-pages
+          path: gh-pages-existing
+
+      - name: Ensure gh-pages dir exists
+        run: mkdir -p gh-pages-existing
+
+      - name: Create merged APT repository
+        run: |
+          chmod +x ./scripts/create-botdrop-repo.sh
+          ./scripts/create-botdrop-repo.sh \
+            ./debs-output \
+            ./site-root \
+            aarch64 \
+            --merge-existing ./gh-pages-existing \
+            --no-archive
+
+      - name: Validate repository manifest
+        env:
+          REQUIRE_SHARP_ADDON: ${{ github.event.inputs.require_sharp_addon }}
+        run: |
+          pkg_file="./site-root/dists/stable/main/binary-aarch64/Packages"
+          if [ "$REQUIRE_SHARP_ADDON" = "true" ]; then
+            if ! grep -q '^Package: sharp-node-addon$' "$pkg_file"; then
+              echo "sharp-node-addon missing from repository manifest"
+              exit 1
+            fi
+          else
+            echo "Optional package validation skipped for sharp-node-addon."
+          fi
+
+      - name: Archive repository backup
+        run: |
+          (cd . && zip -r -q botdrop-repo-aarch64.zip site-root)
+
+      - name: Generate release tag
+        id: tag
+        env:
+          INPUT_RELEASE_TAG: ${{ github.event.inputs.release_tag }}
+        run: |
+          if [ -n "$INPUT_RELEASE_TAG" ]; then
+            TAG="$INPUT_RELEASE_TAG"
+          else
+            BASE_TAG="packages-$(date '+%Y.%m.%d')"
+            EXISTING=$(git tag -l "${BASE_TAG}*" | sort -V | tail -1 || echo "")
+            if [ -n "$EXISTING" ]; then
+              REV=$(echo "$EXISTING" | grep -oE 'r[0-9]+$' | sed 's/r//' || echo "0")
+              REV=$((REV + 1))
+              TAG="${BASE_TAG}-r${REV}"
+            else
+              TAG="${BASE_TAG}-r1"
+            fi
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update backup release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" botdrop-repo-aarch64.zip --clobber
+          else
+            gh release create "$TAG" \
+              --title "BotDrop Packages - $TAG" \
+              --notes "Automated backup archive for BotDrop APT repo." \
+              botdrop-repo-aarch64.zip
+          fi
+
+      - name: Update apt-repo-latest tag and asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        if: github.ref == 'refs/heads/master' || github.event.inputs.update_latest == 'true'
+        run: |
+          git fetch --tags origin
+          git tag -f apt-repo-latest
+          git push --force origin apt-repo-latest
+
+          if gh release view apt-repo-latest >/dev/null 2>&1; then
+            gh release upload apt-repo-latest botdrop-repo-aarch64.zip --clobber
+          else
+            gh release create apt-repo-latest \
+              --title "BotDrop APT Repo - latest" \
+              --notes "Rolling latest backup archive for BotDrop APT repo." \
+              botdrop-repo-aarch64.zip
+          fi
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site-root
+
+  # ─── Job 2: Deploy to GitHub Pages (requires environment approval) ───
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/master' || github.event.inputs.update_latest == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
