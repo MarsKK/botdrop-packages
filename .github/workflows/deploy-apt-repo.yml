@@ -179,17 +179,6 @@ jobs:
             echo "Optional package validation skipped for sharp-node-addon."
           fi
 
-      - name: Push to apt-staging branch
-        run: |
-          cd site-root
-          git init
-          git checkout -b apt-staging
-          git add -A
-          git -c user.name="github-actions" -c user.email="github-actions@github.com" \
-            commit -m "staging: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          git push --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" apt-staging
-          echo "::notice::Staging APT source ready: deb [trusted=yes] https://raw.githubusercontent.com/${{ github.repository }}/apt-staging/ stable main"
-
       - name: Archive repository backup
         run: |
           (cd . && zip -r -q botdrop-repo-aarch64.zip site-root)
@@ -254,6 +243,7 @@ jobs:
   # ─── Job 2: Deploy to GitHub Pages (requires environment approval) ───
   deploy:
     needs: build
+    if: github.ref == 'refs/heads/master' || github.event.inputs.update_latest == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
