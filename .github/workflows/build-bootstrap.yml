@@ -149,6 +149,28 @@ jobs:
             --notes-file release_notes.md \
             ./bootstraps/*.zip
 
+      - name: Update bootstrap-latest tag and release
+        if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git fetch --tags origin
+          git tag -f bootstrap-latest
+          git push --force origin bootstrap-latest
+
+          if gh release view bootstrap-latest >/dev/null 2>&1; then
+            gh release edit bootstrap-latest \
+              --notes "Rolling latest bootstrap archive for BotDrop. Currently mirrors ${{ steps.tag.outputs.tag_name }}."
+            for f in ./bootstraps/*.zip; do
+              gh release upload bootstrap-latest "$f" --clobber
+            done
+          else
+            gh release create bootstrap-latest \
+              --title "BotDrop Bootstrap - latest" \
+              --notes "Rolling latest bootstrap archive for BotDrop. Currently mirrors ${{ steps.tag.outputs.tag_name }}." \
+              ./bootstraps/*.zip
+          fi
+
       - name: Summary
         run: |
           echo "## Bootstrap Build Complete! :rocket:" >> $GITHUB_STEP_SUMMARY
