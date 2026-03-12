@@ -253,14 +253,3 @@ jobs:
               --notes "Rolling latest backup archive for BotDrop APT repo." \
               botdrop-repo-aarch64.zip
           fi
-
-      - name: Deploy to GitHub Pages
-        if: github.ref == 'refs/heads/master' || github.event.inputs.update_latest == 'true'
-        run: |
-          cd site-root
-          git init
-          git checkout -b gh-pages
-          git add -A
-          git -c user.name="github-actions" -c user.email="github-actions@github.com" \
-            commit -m "deploy: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          git push --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" gh-pages
